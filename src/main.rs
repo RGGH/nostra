@@ -9,7 +9,7 @@ use std::fs::File;
 use std::{
     env,
     net::{Ipv4Addr, SocketAddr, SocketAddrV4},
-    time::Duration,
+    time::{Duration,SystemTime},
 };
 
 type Tags = Vec<Vec<String>>;
@@ -29,6 +29,15 @@ fn load_env() {
     dotenv().ok();
 }
 
+// calculate the current Unix timestamp in seconds
+fn current_unix_timestamp() -> u64 {
+    SystemTime::now()
+        .duration_since(SystemTime::UNIX_EPOCH)
+        .expect("Time went backwards")
+        .as_secs()
+}
+
+
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     load_env();
@@ -45,18 +54,16 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // Create new client with custom options.
     let client = Client::with_opts(&my_keys, opts);
-
-    // Add relays
     client.add_relay("wss://relay.damus.io").await?;
-
-    // Connect to relays
     client.connect().await;
 
     // Use EventSource::Relays as the event source
     let event_source = EventSource::relays(Some(Duration::from_secs(40)));
 
+    let five_minutes_ago = current_unix_timestamp() - 5 * 60;
     // Build a filter for notes containing the hashtag #jobstr
-    let filter = Filter::new().kind(Kind::TextNote).hashtag("jobstr");
+    //let filter = Filter::new().kind(Kind::TextNote).hashtag("jobstr").since(Timestamp::now()-600);
+    let filter = Filter::new().kind(Kind::TextNote).hashtag("jobstr").since(five_minutes_ago.into());
 
     let events = client.get_events_of(vec![filter], event_source).await?;
     
