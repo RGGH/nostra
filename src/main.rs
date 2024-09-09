@@ -9,8 +9,9 @@ use std::fs::File;
 use std::{
     env,
     net::{Ipv4Addr, SocketAddr, SocketAddrV4},
-    time::{Duration,SystemTime},
+    time::{Duration, SystemTime},
 };
+use tokio::time::sleep;
 
 type Tags = Vec<Vec<String>>;
 
@@ -29,7 +30,7 @@ fn load_env() {
     dotenv().ok();
 }
 
-// calculate the current Unix timestamp in seconds
+// Calculate the current Unix timestamp in seconds
 fn current_unix_timestamp() -> u64 {
     SystemTime::now()
         .duration_since(SystemTime::UNIX_EPOCH)
@@ -37,6 +38,42 @@ fn current_unix_timestamp() -> u64 {
         .as_secs()
 }
 
+async fn check_for_new_events(client: &Client) -> Result<(), Box<dyn std::error::Error>> {
+    let five_minutes_ago = current_unix_timestamp() - 5 * 60;
+    
+    // Build a filter for notes containing the hashtag #jobstr
+    let filter = Filter::new()
+        .kind(Kind::TextNote)
+        .hashtag("jobstr")
+        .since(five_minutes_ago.into());
+
+    let event_source = EventSource::relays(Some(Duration::from_secs(40)));
+    let events = client.get_events_of(vec![filter], event_source).await?;
+    
+    // Convert events to JSON and print
+    let json_data = serde_json::to_string_pretty(&events)?;
+    println!("{:?}", json_data);
+
+    // Deserialize the JSON data into a vector of structs
+    let nos_rawvec: Vec<NosContent> =
+        serde_json::from_str(&json_data).expect("Failed to deserialize JSON");
+
+    // Use a HashSet to remove duplicates
+    let set: HashSet<_> = nos_rawvec.into_iter().collect();
+    let nos_vec: Vec<_> = set.into_iter().collect();
+
+    for event in events {
+        println!("\nevent content = \x1b[42m  \x1b[0m{:#?}", event.content);
+    }
+
+    // Create or open the output file
+    let mut file = File::create("output.json")?;
+    serde_json::to_writer_pretty(&mut file, &nos_vec)?;
+
+    println!("JSON file created successfully - next: upsert to jobstr!");
+
+    Ok(())
+}
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -57,47 +94,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     client.add_relay("wss://relay.damus.io").await?;
     client.connect().await;
 
-    // Use EventSource::Relays as the event source
-    let event_source = EventSource::relays(Some(Duration::from_secs(40)));
+    loop {
+        check_for_new_events(&client).await?;
 
-    let five_minutes_ago = current_unix_timestamp() - 5 * 60;
-    // Build a filter for notes containing the hashtag #jobstr
-    //let filter = Filter::new().kind(Kind::TextNote).hashtag("jobstr").since(Timestamp::now()-600);
-    let filter = Filter::new().kind(Kind::TextNote).hashtag("jobstr").since(five_minutes_ago.into());
-
-    let events = client.get_events_of(vec![filter], event_source).await?;
-    
-    // check out to_string_pretty !!
-    let json_data = serde_json::to_string_pretty(&events)?;
-    println!("{:?}", json_data);
-
-    // Deserialize the JSON data into a vector of structs
-    let nos_rawvec: Vec<NosContent> =
-        serde_json::from_str(&json_data).expect("Failed to deserialize JSON");
-
-    // Use a HashSet to remove duplicates
-    let set: HashSet<_> = nos_rawvec.into_iter().collect();
-
-    // Convert the HashSet back into a vector if needed
-    let nos_vec: Vec<_> = set.into_iter().collect();
-
-    for event in events {
-        println!("\nevent content = \x1b[42m  \x1b[0m{:#?}", event.content);
+        // Sleep for 5 minutes (300 seconds)
+        sleep(Duration::from_secs(300)).await;
     }
-
-    // Create or open the output file
-    let _file = File::create("output.csv")?;
-
-    // Open or create a file for writing
-    let mut file = File::create("output.json")?;
-
-    // Serialize the vector of NosCont to JSON and write it to the file
-    serde_json::to_writer_pretty(&mut file, &nos_vec)?;
-
-    println!("JSON file created successfully - upsert to jobstr!");
-
-    Ok(())
-    // Publish a text note:
-    //client.publish_text_note("Experimenting with Rust and nostr_sdk - this was posted with rust-nostr - I'll fix Jobstr.work soon!", []).await?;
-    //println!("{:?}", "sent note!\n");
 }
